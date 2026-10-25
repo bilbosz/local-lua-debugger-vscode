@@ -1096,8 +1096,9 @@ export namespace Debugger {
         return str;
     }
 
+    //As the message handler of an xpcall it gives the error back, so that the xpcall reports it instead of nil
     function breakForError(err: unknown, level: number, propagate: true): never;
-    function breakForError(err: unknown, level?: number, propagate?: false): void;
+    function breakForError(err: unknown, level?: number, propagate?: false): unknown;
     function breakForError(err: unknown, level?: number, propagate?: boolean) {
         const message = mapSources(tostring(err));
         level = (level ?? 1) + 1;
@@ -1115,6 +1116,7 @@ export namespace Debugger {
             skipNextBreak = true;
             luaError(err, level);
         }
+        return err;
     }
 
     function registerThread(thread: LuaThread) {
