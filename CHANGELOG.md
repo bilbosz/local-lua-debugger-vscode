@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- feat: the `breakInProtectedCalls` launch option, off by default: an `error` or a failed `assert` that a `pcall`, an `xpcall` or a `coroutine.resume` catches no longer breaks into the debugger, nor does `debug.traceback` called as an `xpcall` handler; only an error nothing catches breaks, where it is raised. The replacements of `pcall` and `xpcall` a runtime installs are recognized by the originals they keep as upvalues or by the call's name
+- fix: the debugger's message handler returns the error it was given, so an error inside a coroutine created with `coroutine.wrap` reaches the program instead of `nil`
 - fix: send a `continued` event after a continue or step the client requested, so a client that tracks the paused state from the `stopped` and `continued` events alone (DebugMCP) sees the program running again instead of paused forever
 
 ## Version 0.3.9

@@ -47,6 +47,8 @@ export const luaCoroutineWrap = coroutine.wrap;
 export const luaDebugTraceback = debug.traceback;
 export const luaCoroutineCreate = coroutine.create;
 export const luaCoroutineResume = coroutine.resume;
+export const luaPcall = _G.pcall;
+export const luaXpcall = _G.xpcall;
 
 export const luaLenMetamethodSupported = (() => (setmetatable({}, {__len: () => 42}) as unknown[]).length === 42)();
 

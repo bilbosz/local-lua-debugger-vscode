@@ -116,6 +116,11 @@
                                 "description": "Break on errors inside of coroutines",
                                 "default": true
                             },
+                            "breakInProtectedCalls": {
+                                "type": "boolean",
+                                "description": "Break at an error or a failed assert that a pcall, an xpcall or a coroutine.resume catches; off, only an error nothing catches breaks, where it is raised",
+                                "default": false
+                            },
                             "pullBreakpointsSupport": {
                                 "type": "boolean",
                                 "description": "Runtime supports pulling of breakpoints. (need to periodically call lldebugger.pullBreakpoints())",

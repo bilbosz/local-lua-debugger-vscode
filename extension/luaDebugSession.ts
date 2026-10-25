@@ -74,6 +74,7 @@ const envVariable = "LOCAL_LUA_DEBUGGER_VSCODE";
 const filePathEnvVariable = "LOCAL_LUA_DEBUGGER_FILEPATH";
 const scriptRootsEnvVariable: LuaDebug.ScriptRootsEnv = "LOCAL_LUA_DEBUGGER_SCRIPT_ROOTS";
 const breakInCoroutinesEnv: LuaDebug.BreakInCoroutinesEnv = "LOCAL_LUA_DEBUGGER_BREAK_IN_COROUTINES";
+const breakInProtectedCallsEnv: LuaDebug.BreakInProtectedCallsEnv = "LOCAL_LUA_DEBUGGER_BREAK_IN_PROTECTED_CALLS";
 const stepUnmappedLinesEnv: LuaDebug.StepUnmappedLinesEnv = "LOCAL_LUA_DEBUGGER_STEP_UNMAPPED_LINES";
 const inputFileEnv: LuaDebug.InputFileEnv = "LOCAL_LUA_DEBUGGER_INPUT_FILE";
 const outputFileEnv: LuaDebug.OutputFileEnv = "LOCAL_LUA_DEBUGGER_OUTPUT_FILE";
@@ -243,6 +244,9 @@ export class LuaDebugSession extends LoggingDebugSession {
         }
         if (typeof this.config.breakInCoroutines !== "undefined") {
             processOptions.env[breakInCoroutinesEnv] = this.config.breakInCoroutines ? "1" : "0";
+        }
+        if (typeof this.config.breakInProtectedCalls !== "undefined") {
+            processOptions.env[breakInProtectedCallsEnv] = this.config.breakInProtectedCalls ? "1" : "0";
         }
         if (typeof this.config.stepUnmappedLines !== "undefined") {
             processOptions.env[stepUnmappedLinesEnv] = this.config.stepUnmappedLines ? "1" : "0";
