@@ -41,6 +41,7 @@ export interface LaunchConfig {
     verbose?: boolean;
     stopOnEntry?: boolean;
     breakInCoroutines?: boolean;
+    breakInProtectedCalls?: boolean;
     pullBreakpointsSupport?: boolean;
     stepUnmappedLines?: boolean;
     scriptFiles?: string[];

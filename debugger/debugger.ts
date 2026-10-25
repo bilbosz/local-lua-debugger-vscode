@@ -26,6 +26,8 @@ import {
     luaCoroutineCreate,
     luaCoroutineWrap,
     luaCoroutineResume,
+    luaPcall,
+    luaXpcall,
     luaDebugTraceback,
     loadLuaString,
     luaGetEnv
@@ -98,6 +100,75 @@ export namespace Debugger {
     }
 
     let skipNextBreak = false;
+
+    const breakInProtectedCallsEnv: LuaDebug.BreakInProtectedCallsEnv = "LOCAL_LUA_DEBUGGER_BREAK_IN_PROTECTED_CALLS";
+    const breakInProtectedCalls = os.getenv(breakInProtectedCallsEnv) === "1";
+
+    //The functions whose frame marks a protected call: pcall and xpcall as the debugger found them, and the originals a
+    //replacement of them (a runtime wrapping them) keeps as upvalues under their names
+    const protectedCallFunctions = new LuaTable<AnyNotNil, boolean | undefined>();
+    for (const func of [luaPcall, luaXpcall]) {
+        protectedCallFunctions.set(func, true);
+        const info = debug.getinfo(func, "S");
+        if (info && info.what === "Lua") {
+            for (let i = 1; ; ++i) {
+                const [name, value] = debug.getupvalue(func, i);
+                if (name === undefined) {
+                    break;
+                }
+                if ((name === "pcall" || name === "xpcall") && type(value) === "function") {
+                    protectedCallFunctions.set(value as AnyNotNil, true);
+                }
+            }
+        }
+    }
+    const protectedCallNames: Record<string, boolean | undefined> = {pcall: true, xpcall: true};
+
+    //Whether the last resume of a thread catches an error raised in it: a coroutine.resume always, a coroutine.wrap
+    //when its caller runs in a protected call
+    const resumedProtected = setmetatable(new LuaTable<Thread, boolean | undefined>(), {__mode: "k"});
+
+    function isResumedProtected() {
+        const thread = coroutine.running();
+        return thread !== undefined && resumedProtected.get(thread) === true;
+    }
+
+    //Whether an error raised where the caller of this function was called would be caught: a pcall or xpcall frame
+    //between there and the debugger's own wrapper of the body (a coroutine's, a debugged function's), recognized by
+    //its function or, for a C frame, by the name it was called by, or else the resume of the thread. The debugger's own
+    //frames on top (the error replacement, a resumer) are passed over.
+    function isInProtectedCall() {
+        const ownSource = luaAssert(debug.getinfo(1, "S")).source;
+        let level = 2;
+        let info = debug.getinfo(level, "fS");
+        while (info && info.source === ownSource) {
+            ++level;
+            info = debug.getinfo(level, "fS");
+        }
+        while (info && info.source !== ownSource) {
+            if (info.func !== undefined && protectedCallFunctions.get(info.func as AnyNotNil)) {
+                return true;
+            }
+            if (info.what === "C") {
+                const nameInfo = debug.getinfo(level, "n");
+                if (nameInfo && nameInfo.name !== undefined && protectedCallNames[nameInfo.name]) {
+                    return true;
+                }
+            }
+            ++level;
+            info = debug.getinfo(level, "fS");
+        }
+        return isResumedProtected();
+    }
+
+    //A raise (one that propagates) is caught by a protected call on its stack; an error that reached the debugger's
+    //handler of a body is caught only by the resume of its thread
+    function isCaught(propagate: boolean | undefined) {
+        if (breakInProtectedCalls) {
+            return false;
+        }
+        return propagate ? isInProtectedCall() : isResumedProtected();
+    }
 
     const enum HookType {
         Global = "global",
@@ -1034,7 +1105,7 @@ export namespace Debugger {
         if (skipNextBreak) {
             skipNextBreak = false;
 
-        } else if (!inDebugBreak) {
+        } else if (!inDebugBreak && !isCaught(propagate)) {
             const thread = getActiveThread();
             Send.debugBreak(message, "error", getThreadId(thread));
             debugBreak(thread, level);
@@ -1077,8 +1148,11 @@ export namespace Debugger {
         if (allowBreak && useXpcallInCoroutine()) {
             const originalFunc = f as DebuggableFunction;
             function debugFunc(...args: unknown[]) {
+                //Not a tail call: the frame stays under the body while it runs, where isInProtectedCall stops its walk
+                //before the xpcall below, which is the debugger's own protection, not the program's
                 function wrappedFunc() {
-                    return originalFunc(...args);
+                    const results = originalFunc(...args);
+                    return $multi(...results);
                 }
                 const results = xpcall(wrappedFunc, breakForError);
                 if (results[0]) {
@@ -1102,12 +1176,27 @@ export namespace Debugger {
     ): LuaMultiReturn<[true, ...unknown[]] | [false, string]> {
         const activeThread = getActiveThread();
         threadStackOffsets.set(activeThread, 1);
+        resumedProtected.set(thread, true);
         const results = luaCoroutineResume(thread, ...args);
         if (!results[0]) {
-            breakForError(results[1], 2);
+            if (breakInProtectedCalls) {
+                breakForError(results[1], 2);
+            } else {
+                //set by the wrapper of the body for the break at the resume, which the catch of the resume is instead
+                skipNextBreak = false;
+            }
         }
         threadStackOffsets.delete(activeThread);
         return results;
+    }
+
+    //coroutine.resume replacement that only records the catch it is, when errors in coroutines do not break
+    function recordingCoroutineResume(
+        thread: LuaThread,
+        ...args: unknown[]
+    ): LuaMultiReturn<[true, ...unknown[]] | [false, string]> {
+        resumedProtected.set(thread, true);
+        return luaCoroutineResume(thread, ...args);
     }
 
     //coroutine.wrap replacement for hooking threads
@@ -1117,6 +1206,9 @@ export namespace Debugger {
         function resumer(...args: unknown[]) {
             const activeThread = getActiveThread();
             threadStackOffsets.set(activeThread, 1);
+            if (!breakInProtectedCalls) {
+                resumedProtected.set(thread, isInProtectedCall());
+            }
             const results = luaCoroutineResume(thread, ...args);
             if (!results[0]) {
                 breakForError(results[1], 2, true);
@@ -1144,8 +1236,9 @@ export namespace Debugger {
         if (skipNextBreak) {
             skipNextBreak = false;
 
-        //Break if debugging globally and traceback was not called manually from scripts
-        } else if (hookStack[hookStack.length - 1] === HookType.Global) {
+        //Break if debugging globally and traceback was not called manually from scripts: called by the C of an xpcall
+        //as its handler, which is a catch
+        } else if (breakInProtectedCalls && hookStack[hookStack.length - 1] === HookType.Global) {
             const info = debug.getinfo(2, "S");
             if (info && info.what === "C") {
                 const thread = isThread(threadOrMessage) ? threadOrMessage : getActiveThread();
@@ -1254,7 +1347,9 @@ export namespace Debugger {
         // eslint-disable-next-line @typescript-eslint/ban-types
         coroutine.create = (f: Function) => debuggerCoroutineCreate(f, breakInCoroutines);
         coroutine.wrap = debuggerCoroutineWrap;
-        coroutine.resume = breakInCoroutines ? debuggerCoroutineResume : luaCoroutineResume;
+        coroutine.resume = breakInCoroutines
+            ? debuggerCoroutineResume
+            : (breakInProtectedCalls ? luaCoroutineResume : recordingCoroutineResume);
 
         const currentThread = coroutine.running();
         if (currentThread && !threadIds.get(currentThread)) {
@@ -1298,7 +1393,14 @@ export namespace Debugger {
             triggerBreak();
         }
 
-        const results = xpcall(() => func(...args), breakForError);
+        //Not a tail call, as the coroutine body's wrapper: the frame marks the debugger's own protection
+        const results = xpcall(
+            () => {
+                const funcResults = func(...args);
+                return $multi(...funcResults);
+            },
+            breakForError
+        );
         popHook();
         if (results[0]) {
             return unpack(results, 2);

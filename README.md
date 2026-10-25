@@ -155,6 +155,14 @@ Break into the debugger when errors occur inside coroutines.
 - Coroutines created with `coroutine.wrap` will always break, regardless of this option.
 - In Lua 5.1, this will break where the coroutine was resumed and the message will contain the actual location of the error.
 
+#### `breakInProtectedCalls`
+
+Break into the debugger at an `error` or a failed `assert` that a `pcall`, an `xpcall` or a `coroutine.resume` catches. Off by default: only an error nothing catches breaks, where it is raised, and `debug.traceback` called as the message handler of an `xpcall` does not break either.
+
+- An error inside a coroutine created with `coroutine.wrap` is caught when the call of the wrapper is.
+- A `pcall` or `xpcall` the program replaced (a runtime wrapping them) is recognized by the original the replacement keeps as an upvalue under its name, or by the name the call was made by.
+- A program whose whole run sits under an `xpcall` (LÖVE's `love.run`) therefore never breaks at an error on its own; its error handler can call `lldebugger.requestBreak()` to pause with the stack that raised.
+
 #### `stopOnEntry`
 
 Automatically break on first line after debug hook is set.
